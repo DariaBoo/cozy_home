@@ -10,13 +10,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.cozyhome.onlineshop.dto.TokenResponseDto;
 import com.cozyhome.onlineshop.dto.auth.EmailRequest;
 import com.cozyhome.onlineshop.dto.auth.LoginRequest;
 import com.cozyhome.onlineshop.dto.auth.MessageResponse;
 import com.cozyhome.onlineshop.dto.auth.NewPasswordRequest;
 import com.cozyhome.onlineshop.dto.auth.SignupRequest;
-import com.cozyhome.onlineshop.exception.AuthenticationException;
+import com.cozyhome.onlineshop.dto.auth.TokenResponseDto;
+import com.cozyhome.onlineshop.exception.AuthException;
 import com.cozyhome.onlineshop.productservice.controller.swagger.SwaggerResponse;
 import com.cozyhome.onlineshop.userservice.model.User;
 import com.cozyhome.onlineshop.userservice.security.JWT.JwtTokenUtil;
@@ -64,7 +64,7 @@ public class AuthController {
 			return ResponseEntity.ok().body(new TokenResponseDto(token));
 		} else {
 			log.warn("[ON login]:: Authentication failed for user: {}", username);
-			throw new AuthenticationException("Authentication failed for user");
+			throw new AuthException("Authentication failed for user");
 		}
 	}
 
@@ -111,4 +111,14 @@ public class AuthController {
 		String token = jwtTokenUtil.generateToken(user.getEmail());
 		return ResponseEntity.ok().body(new TokenResponseDto(token));
 	}
+	
+	@Operation(summary = "Delete user.", description = "Delete user.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = SwaggerResponse.Code.CODE_200, description = SwaggerResponse.Message.CODE_200_FOUND_DESCRIPTION) })
+    @PostMapping("/delete-account")
+    public ResponseEntity<String> deleteUser(@RequestBody EmailRequest emailRequest) {
+        userService.deleteUser(emailRequest.getEmail());
+        log.info("[ON deleteUser] :: user deleted successfully!");
+        return ResponseEntity.ok().build();
+    }
 }
