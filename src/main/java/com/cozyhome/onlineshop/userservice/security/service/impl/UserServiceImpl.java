@@ -5,17 +5,16 @@ import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
+import com.cozyhome.onlineshop.exception.AuthException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import com.cozyhome.onlineshop.dto.auth.NewPasswordRequest;
 import com.cozyhome.onlineshop.dto.auth.SignupRequest;
-import com.cozyhome.onlineshop.dto.user.PasswordChangeRequest;
 import com.cozyhome.onlineshop.dto.user.UserInformationRequest;
 import com.cozyhome.onlineshop.dto.user.UserInformationResponse;
 import com.cozyhome.onlineshop.exception.DataAlreadyExistException;
 import com.cozyhome.onlineshop.exception.DataNotFoundException;
-import com.cozyhome.onlineshop.exception.InvalidOldPasswordException;
 import com.cozyhome.onlineshop.userservice.model.Role;
 import com.cozyhome.onlineshop.userservice.model.RoleE;
 import com.cozyhome.onlineshop.userservice.model.User;
@@ -50,9 +49,14 @@ public class UserServiceImpl implements UserService {
 
 	@Override
 	public void saveUser(SignupRequest signupRequest) {
-		User user = User.builder().email(signupRequest.getEmail()).password(encoder.encode(signupRequest.getPassword()))
-				.firstName(signupRequest.getFirstName()).lastName(signupRequest.getLastName())
-				.phoneNumber(signupRequest.getPhoneNumber()).createdAt(LocalDateTime.now()).status(UserStatusE.ACTIVE)
+		User user = User.builder()
+				.email(signupRequest.getEmail())
+				.password(encoder.encode(signupRequest.getPassword()))
+				.firstName(signupRequest.getFirstName())
+				.lastName(signupRequest.getLastName())
+				.phoneNumber(signupRequest.getPhoneNumber())
+				.createdAt(LocalDateTime.now())
+				.status(UserStatusE.ACTIVE)
 				.build();
 
 		if (signupRequest.getBirthday() != null && !signupRequest.getBirthday().isEmpty()) {
@@ -118,49 +122,48 @@ public class UserServiceImpl implements UserService {
 	public User resetPassword(String token, NewPasswordRequest newPassword) {
 		PasswordResetToken resetToken = (PasswordResetToken) securityTokenRepository.findByToken(token);
 
-		if (resetToken == null || resetToken.isExpired()) {
-			throw new IllegalArgumentException("Invalid or expired token");
-		}
+        if (resetToken == null || resetToken.isExpired()) {
+            throw new IllegalArgumentException("Invalid or expired token");
+        }
 
-		User user = resetToken.getUser();
-		user.setPassword(encoder.encode(newPassword.getPassword()));
-		userRepository.save(user);
+        User user = resetToken.getUser();
+        user.setPassword(encoder.encode(newPassword.getPassword()));
+        userRepository.save(user);
 
-		securityTokenRepository.delete(resetToken);
-		return user;
+        securityTokenRepository.delete(resetToken);	
+        return user;
 	}
 
 	@Override
 	public UserInformationResponse updateUserData(UserInformationRequest userInformationDto, String userId) {
-		User user = userRepository.findById(userId).orElseThrow(() -> new DataNotFoundException(
-				String.format("User with email = %s not found.", userInformationDto.getEmail())));
+		User user = userRepository.findById(userId)
+				.orElseThrow(() -> new DataNotFoundException(
+						String.format("User with email = %s not found.", userInformationDto.getEmail())));
 
-		if (!user.getLastName().equals(userInformationDto.getLastName())) {
-			if (userRepository.existsByEmail(userInformationDto.getEmail())) {
-				throw new DataAlreadyExistException(
-						String.format("Email is already in use by another user. " + "Forbidden to change mail to %s.",
-								userInformationDto.getEmail()));
-			}
-			user.setLastName(userInformationDto.getLastName());
-		}
-		if (!user.getFirstName().equals(userInformationDto.getFirstName())) {
-			user.setFirstName(userInformationDto.getFirstName());
-		}
-		if (!user.getPhoneNumber().equals(userInformationDto.getPhoneNumber())) {
-			user.setPhoneNumber(userInformationDto.getPhoneNumber());
-		}
+		user.setLastName(userInformationDto.getLastName());
+		user.setFirstName(userInformationDto.getFirstName());
+		user.setPhoneNumber(userInformationDto.getPhoneNumber());
+
 		if (!user.getEmail().equals(userInformationDto.getEmail())) {
+			if (userRepository.existsByEmail(userInformationDto.getEmail()) ) {
+				throw new DataAlreadyExistException(String.format("Email %s is already in use", userInformationDto.getEmail()));
+			}
 			user.setEmail(userInformationDto.getEmail());
 		}
+
 		if (!userInformationDto.getBirthday().isEmpty()) {
 			LocalDate birthday = LocalDate.parse(userInformationDto.getBirthday());
 			user.setBirthday(birthday);
 		}
-		if (user.getPassword().equals(userInformationDto.getOldPassword())
-				&& userInformationDto.getNewPassword() != null && !userInformationDto.getNewPassword().isEmpty()
-				&& !user.getPassword().equals(userInformationDto.getNewPassword())) {
-			user.setPassword(userInformationDto.getNewPassword());
+
+		if (!userInformationDto.getNewPassword().isEmpty()) {
+			if (encoder.matches(userInformationDto.getOldPassword(), user.getPassword())) {
+				user.setPassword(encoder.encode(userInformationDto.getNewPassword()));
+			} else {
+				throw new AuthException("Wrong old password entered.");
+			}
 		}
+
 		User updatedUser = userRepository.save(user);
 		return userBuilder.buildUserInformationResponse(updatedUser);
 	}
@@ -173,16 +176,9 @@ public class UserServiceImpl implements UserService {
 	}
 
 	@Override
-	public void changePassword(String email, PasswordChangeRequest dto) {
-		User user = userRepository.findByEmail(email)
-				.orElseThrow(() -> new DataNotFoundException(String.format("User with email = %s not found.", email)));
-		if (encoder.matches(dto.getOldPassword(), user.getPassword())) {
-			user.setPassword(encoder.encode(dto.getNewPassword()));
-			userRepository.save(user);
-		} else {
-			log.error("[ON changePassword] :: Password change failed: the provided old password does not match the user's current password");
-			throw new InvalidOldPasswordException("Password change failed: the provided old password does not match the user's current password");
-		}
+	public void deleteUser(String email) {
+		User user = userRepository.getByEmail(email).orElseThrow(() -> new IllegalArgumentException("Not user found by the email " + email));
+		log.info("[ON deleteUser] :: request to delete user with email {}", email);
+		userRepository.delete(user);
 	}
-
 }

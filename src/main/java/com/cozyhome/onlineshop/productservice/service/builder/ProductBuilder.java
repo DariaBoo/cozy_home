@@ -2,7 +2,6 @@ package com.cozyhome.onlineshop.productservice.service.builder;
 
 import com.cozyhome.onlineshop.dto.inventory.CheckingProductAvailableAndStatusDto;
 import com.cozyhome.onlineshop.dto.CollectionDto;
-import com.cozyhome.onlineshop.dto.ColorDto;
 import com.cozyhome.onlineshop.dto.ProductDto;
 import com.cozyhome.onlineshop.dto.ProductForBasketDto;
 import com.cozyhome.onlineshop.dto.inventory.QuantityStatusDto;
@@ -13,12 +12,10 @@ import com.cozyhome.onlineshop.dto.request.ProductColorDto;
 import com.cozyhome.onlineshop.exception.DataNotFoundException;
 import com.cozyhome.onlineshop.inventoryservice.service.InventoryService;
 import com.cozyhome.onlineshop.productservice.model.Category;
-import com.cozyhome.onlineshop.productservice.model.Color;
 import com.cozyhome.onlineshop.productservice.model.ImageProduct;
 import com.cozyhome.onlineshop.productservice.model.Material;
 import com.cozyhome.onlineshop.productservice.model.Product;
 import com.cozyhome.onlineshop.productservice.model.enums.ColorsEnum;
-import com.cozyhome.onlineshop.productservice.model.enums.ProductQuantityStatus;
 import com.cozyhome.onlineshop.productservice.repository.CategoryRepository;
 import com.cozyhome.onlineshop.productservice.repository.ImageProductRepository;
 import com.cozyhome.onlineshop.productservice.repository.ImageRepositoryCustom;
@@ -58,48 +55,33 @@ public class ProductBuilder {
 
 	public List<ProductDto> buildProductDtoList(List<Product> products, boolean isMain) {
 		List<String> productsSkuCodes = extractSkuCodes(products);
-		Map<String, List<Color>> productColors = imageRepositoryCustom.groupColorsByProductSkuCodeIn(productsSkuCodes);
-		List<ImageProduct> images = imageRepositoryCustom.findImagesByMainPhotoAndProductSkuCodeIn(productsSkuCodes,
-				isMain);
-		Map<String, List<ImageProduct>> imageMap = getImageMap(images);
-		Map<String, String> quantityStatusMap = getProductQuantityStatusMap(products);
-		List<ProductDto> productDtoList = new ArrayList<>();
-		for (Product product : products) {
-			String productSkuCode = product.getSkuCode();
-			ProductDto dto = buildProductDto(product, imageMap.get(productSkuCode), productColors.get(productSkuCode));
-			dto.setProductQuantityStatus(quantityStatusMap.get(productSkuCode));
-			productDtoList.add(dto);
-			log.info("PRODUCT DTO[" + dto + "]");
-		}
-		return productDtoList;
+		Map<String, List<ImageProduct>> imageMap = getImageMap(productsSkuCodes, isMain);
+		Map<String, QuantityStatusDto> quantityStatusMap = inventoryService.getQuantityStatusBySkuCodeList(productsSkuCodes);
+		return products.stream().map(product -> buildProductDto(product, imageMap.get(product.getSkuCode()),
+				quantityStatusMap.get(product.getSkuCode()))).toList();
 	}
 
-	private List<String> extractSkuCodes(List<Product> products) {
-		return products.stream().map(Product::getSkuCode).toList();
-	}
-
-	private Map<String, String> getProductQuantityStatusMap(List<Product> products) {
-		Map<String, String> result = inventoryService.getQuantityStatusBySkuCodeList(extractSkuCodes(products));
-		log.info("GET PRODUCT QUANTITY STATUS MAP " + result);
-		return result;
-	}
-
-	public ProductDto buildProductDto(Product product, List<ImageProduct> images, List<Color> colors) {
-		ProductDto productDto = ProductDto.builder().skuCode(product.getSkuCode()).name(product.getName())
+	public ProductDto buildProductDto(Product product, List<ImageProduct> images,
+									  QuantityStatusDto quantityStatus) {
+		ProductDto productDto = ProductDto.builder()
+				.skuCode(product.getSkuCode())
+				.name(product.getName())
 				.shortDescription(product.getShortDescription())
 				.price(roundBigDecimalToZeroDecimalPlace(product.getPrice()))
 				.imageDtoList(imageBuilder.buildImageDtoList(images))
-				.productQuantityStatus(ProductQuantityStatus.getDescriptionForFalseAvailability(product.isAvailable()))
 				.build();
-
-		if(colors != null) {
-			productDto.setColorDtoList(colors.stream().map(color -> modelMapper.map(color, ColorDto.class)).toList());
+		if (quantityStatus.getStatus() != null) {
+			productDto.setProductQuantityStatus(quantityStatus.getStatus());
+		}
+		if (quantityStatus.getColorQuantityStatus() != null) {
+			productDto.setColorDtoList(convertMapToColorDtoList(quantityStatus.getColorQuantityStatus()));
 		}
 		BigDecimal discount = BigDecimal.valueOf(product.getDiscount());
 		if (!discount.equals(NULL_PERCENT)) {
 			productDto.setDiscount(product.getDiscount());
 			productDto.setPriceWithDiscount(roundBigDecimalToZeroDecimalPlace(product.getPriceWithDiscount()));
 		}
+		log.info("[ON buildProductDto] :: build product dto with skuCode {}", productDto.getSkuCode());
 		return productDto;
 	}
 
@@ -195,9 +177,12 @@ public class ProductBuilder {
                 .price(productsMap.get(productColor.getProductSkuCode()).getPrice())
                 .colorName(ColorsEnum.getColorNameByHex(productColor.getColorHex()))
 				.colorHex(productColor.getColorHex())
-                .availableProductQuantity(productAvailableAndStatus.get(productColor).getAvailableProductQuantity())
-                .quantityStatus(productAvailableAndStatus.get(productColor).getQuantityStatus())
                 .build();
+
+			if (productAvailableAndStatus.get(productColor) != null) {
+				productShopCard.setAvailableProductQuantity(productAvailableAndStatus.get(productColor).getAvailableProductQuantity());
+				productShopCard.setQuantityStatus(productAvailableAndStatus.get(productColor).getQuantityStatus());
+			}
 
             if (!discount.equals(NULL_PERCENT)) {
                 productShopCard.setPriceWithDiscount(roundBigDecimalToZeroDecimalPlace(productsMap.get(productColor.getProductSkuCode()).getPriceWithDiscount()));
@@ -220,7 +205,9 @@ public class ProductBuilder {
 	private float roundFloatToOneDecimalPlace(Float floatValue) {
 		float roundedFloat = 0.0f;
 		String format = "%.1f";
+//		String format = "%.0f";
 		if (floatValue != null) {
+//			roundedFloat = Float.valueOf(String.format(format, floatValue));
 			roundedFloat = Float.parseFloat(String.format(format, floatValue));
 		}
 		return roundedFloat;
@@ -230,7 +217,12 @@ public class ProductBuilder {
 		return value.setScale(digitsAfterDecimal, RoundingMode.HALF_UP);
 	}
 
-	private Map<String, List<ImageProduct>> getImageMap(List<ImageProduct> images) {
+	private List<String> extractSkuCodes(List<Product> products) {
+		return products.stream().map(Product::getSkuCode).toList();
+	}
+	
+	private Map<String, List<ImageProduct>> getImageMap(List<String> productsSkuCodes, boolean isMain) {
+		List<ImageProduct> images = imageRepositoryCustom.findImagesByMainPhotoAndProductSkuCodeIn(productsSkuCodes, isMain);
 		return images.stream()
 				.collect(Collectors.groupingBy(image -> image.getProduct().getSkuCode(), Collectors.toList()));
 	}
